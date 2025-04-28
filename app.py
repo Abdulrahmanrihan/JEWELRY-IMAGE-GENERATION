@@ -6,7 +6,7 @@ import time
 from glob import glob
 import shutil
 import sys
-import re # Import regular expressions for sorting product folders
+import re  # Import regular expressions for sorting product folders
 
 # Set page config
 st.set_page_config(
@@ -35,17 +35,16 @@ except Exception as e:
     st.error(f"An error occurred importing MultiImageStyleTransfer: {str(e)}")
     model_import_success = False
 
-
 # Define project structure
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 INPUTS_DIR = os.path.join(ROOT_DIR, "inputs")
 OUTPUTS_DIR = os.path.join(ROOT_DIR, "outputs")
-MODELS_DIR = os.path.join(ROOT_DIR, "models") # Define models directory path
+MODELS_DIR = os.path.join(ROOT_DIR, "models")  # Define models directory path
 
 # Create directories if they don't exist
 os.makedirs(INPUTS_DIR, exist_ok=True)
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
-os.makedirs(MODELS_DIR, exist_ok=True) # Create models directory if it doesn't exist
+os.makedirs(MODELS_DIR, exist_ok=True)  # Create models directory if it doesn't exist
 
 
 # Function to get client folders
@@ -53,6 +52,7 @@ def get_client_folders():
     folders = [f for f in os.listdir(INPUTS_DIR)
                if os.path.isdir(os.path.join(INPUTS_DIR, f))]
     return sorted(folders)
+
 
 # Function to create a new client folder
 def create_client_folder(folder_name):
@@ -71,6 +71,37 @@ def create_client_folder(folder_name):
         st.error(f"Folder '{safe_folder_name}' already exists!")
         return False
 
+
+# Function to get product folders for a client
+def get_product_folders(client_folder):
+    client_output_path = os.path.join(OUTPUTS_DIR, client_folder)
+    if not os.path.exists(client_output_path):
+        return []  # Return an empty list if the client folder doesn't exist yet
+
+    folders = [f for f in os.listdir(client_output_path)
+               if os.path.isdir(os.path.join(client_output_path, f))]
+    return sorted(folders)
+
+
+# Function to create a new product folder for a client
+def create_product_folder(client_folder, product_name):
+    # Sanitize the product name (similar to client folders)
+    safe_product_name = "".join(c for c in product_name if c.isalnum() or c in (' ', '_', '-')).rstrip()
+    if not safe_product_name:
+        st.error("Invalid product name.")
+        return False
+
+    client_output_path = os.path.join(OUTPUTS_DIR, client_folder)
+    new_folder_path = os.path.join(client_output_path, safe_product_name)
+    if not os.path.exists(new_folder_path):
+        os.makedirs(new_folder_path, exist_ok=True) # create directory (if doesn't exist)
+        st.success(f"Created product folder: {safe_product_name} for client {client_folder}")
+        return True
+    else:
+        st.error(f"Product folder '{safe_product_name}' already exists for client {client_folder}!")
+        return False
+
+
 # Function to count images in a folder
 def count_images_in_folder(folder_path):
     image_extensions = ['*.jpg', '*.jpeg', '*.png']
@@ -78,6 +109,7 @@ def count_images_in_folder(folder_path):
     for ext in image_extensions:
         image_files.extend(glob(os.path.join(folder_path, ext)))
     return len(image_files)
+
 
 # Function to display images in a folder
 def display_folder_images(folder_path, columns=3):
@@ -106,7 +138,7 @@ def upload_images_to_folder(folder_path):
     uploaded_files = st.file_uploader("Upload images for the client",
                                       accept_multiple_files=True,
                                       type=["jpg", "jpeg", "png"],
-                                      key=f"uploader_{os.path.basename(folder_path)}") # Unique key per folder
+                                      key=f"uploader_{os.path.basename(folder_path)}")  # Unique key per folder
 
     if uploaded_files:
         saved_count = 0
@@ -131,44 +163,21 @@ def upload_images_to_folder(folder_path):
 
         if saved_count > 0:
             st.success(f"Uploaded {saved_count} images!")
-            st.rerun() # Refresh page to show new images
+            st.rerun()  # Refresh page to show new images
+
 
 # *** MODIFIED FUNCTION ***
-def generate_designs(client_folder, generation_method, params):
+def generate_designs(client_folder, product_folder, generation_method, params):
     if not model_import_success:
         st.error("Model support library could not be imported. Please check the setup.")
         return False
 
     input_folder = os.path.join(INPUTS_DIR, client_folder)
-    # This is the base output directory for the client (e.g., outputs/Client A)
-    client_output_base_dir = os.path.join(OUTPUTS_DIR, client_folder)
+    # *** MODIFIED: Output path is now to the selected product folder ***
+    output_folder = os.path.join(OUTPUTS_DIR, client_folder, product_folder)
 
-    # Ensure the base client output directory exists
-    os.makedirs(client_output_base_dir, exist_ok=True)
-
-    # --- NEW: Determine the next product folder ---
-    next_product_num = 1
-    try:
-        # List existing items in the client's output directory
-        existing_items = os.listdir(client_output_base_dir)
-        # Filter for directories starting with "product_" followed by numbers
-        product_folders = [
-            d for d in existing_items
-            if os.path.isdir(os.path.join(client_output_base_dir, d)) and re.match(r'product_\d+$', d)
-        ]
-        if product_folders:
-            # Extract numbers and find the maximum
-            existing_nums = [int(folder.split('_')[-1]) for folder in product_folders]
-            if existing_nums:
-                next_product_num = max(existing_nums) + 1
-    except Exception as e:
-        st.warning(f"Could not accurately determine next product number. Starting from 1. Error: {e}")
-        next_product_num = 1 # Fallback
-
-    # Define the specific output folder for this generation run (e.g., outputs/Client A/product_1)
-    product_output_folder = os.path.join(client_output_base_dir, f"product_{next_product_num}")
-    os.makedirs(product_output_folder, exist_ok=True)
-    # --- END NEW ---
+    # Create output folder if it doesn't exist
+    os.makedirs(output_folder, exist_ok=True)
 
     # Get input images
     image_extensions = ['*.jpg', '*.jpeg', '*.png']
@@ -189,15 +198,15 @@ def generate_designs(client_folder, generation_method, params):
         return False
     except RuntimeError as e:
         if "no running event loop" in str(e) and sys.version_info >= (3, 12):
-             st.error("PyTorch event loop error detected, potentially due to Python 3.12. Consider using Python 3.9 or 3.10.")
-             return False
+            st.error("PyTorch event loop error detected, potentially due to Python 3.12. Consider using Python 3.9 or 3.10.")
+            return False
         elif "CUDA out of memory" in str(e):
-             st.error("GPU ran out of memory. Try reducing image/design count, or close other GPU apps.")
-             return False
+            st.error("GPU ran out of memory. Try reducing image/design count, or close other GPU apps.")
+            return False
         else:
-             st.error(f"A PyTorch runtime error occurred: {str(e)}")
-             st.exception(e)
-             return False
+            st.error(f"A PyTorch runtime error occurred: {str(e)}")
+            st.exception(e)
+            return False
     except Exception as e:
         st.error(f"An unexpected error occurred initializing the model: {str(e)}")
         st.exception(e)
@@ -205,7 +214,7 @@ def generate_designs(client_folder, generation_method, params):
 
     # --- Generation logic (largely unchanged) ---
     try:
-        with st.spinner(f"Generating designs into '{os.path.basename(product_output_folder)}'... This may take several minutes."):
+        with st.spinner(f"Generating designs into '{product_folder}'... This may take several minutes."):
             variations = []
             start_time = time.time()
 
@@ -248,15 +257,13 @@ def generate_designs(client_folder, generation_method, params):
                 variations = all_variations
                 status_text.text("Batch processing complete.")
 
-            # --- MODIFIED: Save variations to the specific product folder ---
+            # --- MODIFIED: Save variations to the selected output folder ---
             saved_count = 0
             for i, variation in enumerate(variations):
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
-                # Using a simpler name within the product folder might be okay too, e.g., f"design_{i+1}.png"
-                # Let's stick with timestamp for now to ensure uniqueness if generation is very fast
-                output_filename = f"design_{timestamp}_{i+1}.png"
-                # Save to the new product_output_folder
-                output_path = os.path.join(product_output_folder, output_filename)
+                output_filename = f"design_{timestamp}_{i + 1}.png"
+                # Save to the selected output_folder
+                output_path = os.path.join(output_folder, output_filename)
                 try:
                     variation.save(output_path)
                     saved_count += 1
@@ -267,7 +274,8 @@ def generate_designs(client_folder, generation_method, params):
             duration = end_time - start_time
 
         if saved_count > 0:
-            st.success(f"Successfully generated and saved {saved_count} designs into '{os.path.basename(product_output_folder)}' in {duration:.2f} seconds!")
+            st.success(
+                f"Successfully generated and saved {saved_count} designs into '{product_folder}' in {duration:.2f} seconds!")
             return True
         else:
             st.error("No designs were generated or saved successfully.")
@@ -285,12 +293,15 @@ def main():
     st.title("💎 Jewelry Design Generator")
 
     if sys.version_info >= (3, 12):
-        st.warning("Note: Python 3.12 detected. Consider Python 3.9 or 3.10 for potentially better compatibility with some AI libraries.")
+        st.warning(
+            "Note: Python 3.12 detected. Consider Python 3.9 or 3.10 for potentially better compatibility with some AI libraries.")
     elif sys.version_info < (3, 8):
-         st.warning("Note: Python version older than 3.8 detected. Consider updating Python.")
+        st.warning("Note: Python version older than 3.8 detected. Consider updating Python.")
 
     # Sidebar for controls
     st.sidebar.header("Client Management")
+
+    # Create new client folder
     st.sidebar.subheader("Create New Client")
     new_client_name = st.sidebar.text_input("Enter New Client Name")
     if st.sidebar.button("Create Client Folder"):
@@ -300,6 +311,7 @@ def main():
         else:
             st.sidebar.error("Please enter a client name.")
 
+    # Client selection
     st.sidebar.subheader("Select Client")
     client_folders = get_client_folders()
 
@@ -314,6 +326,31 @@ def main():
         index=0
     )
     selected_client = client_folders[selected_client_index]
+
+    # --- NEW: Product Folder Management ---
+    st.sidebar.subheader(f"Product Management for {selected_client}")
+    # Create new product folder
+    new_product_name = st.sidebar.text_input("Enter New Product Name")
+    if st.sidebar.button("Create Product Folder"):
+        if new_product_name:
+            if create_product_folder(selected_client, new_product_name):
+                st.rerun()  # Refresh to update product folder list
+        else:
+            st.sidebar.error("Please enter a product name.")
+
+    # Select existing product folder
+    product_folders = get_product_folders(selected_client)
+    if not product_folders:
+        st.info(f"No product folders found for {selected_client}. Create one to begin.")
+        selected_product = None # no product folder to select, set to None
+    else:
+        selected_product = st.sidebar.selectbox(
+            "Select Product Folder",
+            product_folders,
+            index=0 # default selection
+        )
+    # --- END NEW ---
+
     client_folder_path = os.path.join(INPUTS_DIR, selected_client)
 
     st.sidebar.subheader(f"Upload Images for {selected_client}")
@@ -337,6 +374,8 @@ def main():
         num_input_images = count_images_in_folder(client_folder_path)
         if num_input_images == 0:
             st.warning("Please upload at least one input image for the selected client before generating designs.")
+        elif selected_product is None:
+            st.warning("Please create or select a product folder before generating designs.") # requires a product folder to proceed
         else:
             generation_method = st.selectbox(
                 "Generation Method",
@@ -345,9 +384,12 @@ def main():
                 help="Determines how uploaded images are used as base structure and style references."
             )
             # Method descriptions... (kept concise)
-            if generation_method == "Standard (Single Base)": st.caption("Uses the *first* image as structure, style from *all*.")
-            elif generation_method == "Rotation (Multiple Base)": st.caption("Rotates base structure through *each* image, style from *all*.")
-            elif generation_method == "Batch Process (All Bases)": st.caption("Generates designs *for each* image as base structure, style from *all*.")
+            if generation_method == "Standard (Single Base)": st.caption(
+                "Uses the *first* image as structure, style from *all*.")
+            elif generation_method == "Rotation (Multiple Base)": st.caption(
+                "Rotates base structure through *each* image, style from *all*.")
+            elif generation_method == "Batch Process (All Bases)": st.caption(
+                "Generates designs *for each* image as base structure, style from *all*.")
 
             st.subheader("Generation Parameters")
             col1, col2 = st.columns(2)
@@ -355,123 +397,121 @@ def main():
                 strength = st.slider("Style Transfer Strength", 0.1, 0.95, 0.7, 0.05)
             params = {"strength": strength}
             if generation_method in ["Standard (Single Base)", "Rotation (Multiple Base)"]:
-                with col2: num_variations = st.number_input("Total Number of Designs", 1, 20, 3, 1)
+                with col2:
+                    num_variations = st.number_input("Total Number of Designs", 1, 20, 3, 1)
                 params["num_variations"] = num_variations
             elif generation_method == "Batch Process (All Bases)":
-                 with col2: variations_per_base = st.number_input("Designs Per Base Image", 1, 10, 2, 1)
-                 params["variations_per_base"] = variations_per_base
-                 total_designs_batch = variations_per_base * num_input_images
-                 st.caption(f"This will generate a total of {total_designs_batch} designs.")
+                with col2:
+                    variations_per_base = st.number_input("Designs Per Base Image", 1, 10, 2, 1)
+                params["variations_per_base"] = variations_per_base
+                total_designs_batch = variations_per_base * num_input_images
+                st.caption(f"This will generate a total of {total_designs_batch} designs.")
 
             if st.button("✨ Generate Designs", type="primary", key="generate_button"):
-                if num_input_images > 0:
-                    if device == 'cpu': st.warning("⚠️ Running on CPU: Generation will be very slow.")
-                    elif num_input_images > 5 or params.get('num_variations', 0) > 5 or params.get('variations_per_base', 0) * num_input_images > 10:
-                         st.warning(f"⏳ Processing multiple images/designs may take significant time. Please be patient.")
-                    success = generate_designs(selected_client, generation_method, params)
+                if num_input_images > 0 and selected_product: # ensure a product folder is selected before proceeding
+                    if device == 'cpu':
+                        st.warning("⚠️ Running on CPU: Generation will be very slow.")
+                    elif num_input_images > 5 or params.get('num_variations', 0) > 5 or params.get(
+                            'variations_per_base', 0) * num_input_images > 10:
+                        st.warning(f"⏳ Processing multiple images/designs may take significant time. Please be patient.")
+                    success = generate_designs(selected_client, selected_product, generation_method, params)
                     if success:
                         st.balloons()
                         st.rerun()
                 else:
-                    st.error("Please upload images before generating designs!")
+                    st.error("Please upload images AND select a product folder before generating designs!")
 
         # --- MODIFIED: Display generated designs section ---
         st.divider()
         st.subheader("Previously Generated Designs")
-        # Base output path for the selected client (e.g., outputs/Client A)
+        # Find base path to selected Client's output folder
         client_output_base_path = os.path.join(OUTPUTS_DIR, selected_client)
 
+        # Check if any output folders exists for client
         if os.path.exists(client_output_base_path):
-            # Find all 'product_N' directories within the client's output folder
+            # Product folder list, includes handling for possible errors when accessing system files
             product_dirs = []
             try:
                 product_dirs = sorted([
                     d for d in os.listdir(client_output_base_path)
-                    if os.path.isdir(os.path.join(client_output_base_path, d)) and re.match(r'product_\d+$', d)
-                ], key=lambda x: int(x.split('_')[-1]), reverse=True) # Sort descending (latest first)
+                    if os.path.isdir(os.path.join(client_output_base_path, d))
+                ])
             except Exception as e:
-                 st.warning(f"Could not list or sort product directories: {e}")
-
-
+                 st.warning(f"Error when listing or sorting product directories: {e}")
+            # Handle case where no output folders exist
             if product_dirs:
                 total_designs_across_products = 0
-                # Display designs for each product folder found
+                # Go through each product folder
                 for product_dir_name in product_dirs:
                     product_dir_path = os.path.join(client_output_base_path, product_dir_name)
                     num_images_in_product = count_images_in_folder(product_dir_path)
-
+                    # Display generated images if found, also updates design count
                     if num_images_in_product > 0:
                         total_designs_across_products += num_images_in_product
-                        # Display product subheader (use markdown for smaller header)
-                        product_num = product_dir_name.split('_')[-1]
-                        st.markdown(f"#### Generation Run: {product_dir_name} ({num_images_in_product} images)")
-                        # Display images within this product folder using the existing function
-                        display_folder_images(product_dir_path, columns=4) # Use 4 columns for output display
-                        st.divider() # Add visual separator between product runs
+                        st.markdown(f"#### Product: {product_dir_name} ({num_images_in_product} images)")
+                        display_folder_images(product_dir_path, columns=4)
+                        st.divider()
+            # Check if designs were added
+            if total_designs_across_products > 0:
+                st.write(f"Total number of generated designs across all products: {total_designs_across_products}")
+            else:
+                st.info("No designs generated for this client yet.")
+        else:
+            st.info("No designs generated for this client yet.") # when client output path doesn't exist
 
-                if total_designs_across_products > 0:
-                    st.write(f"Total number of generated designs across all runs: {total_designs_across_products}")
+        # Add a download button for all designs - download a ZIP folder containing the sub folders
+        if os.path.exists(client_output_base_path):
+            zip_filename = f"{selected_client}_all_designs.zip"
+            # Define where the temporary zip file will be created (outside outputs)
+            zip_path_base = os.path.join(ROOT_DIR, f"{selected_client}_all_designs_temp")
 
-                    # Add a download button for all designs for this client
-                    zip_filename = f"{selected_client}_all_designs.zip"
-                    # Define where the temporary zip file will be created (outside outputs)
-                    zip_path_base = os.path.join(ROOT_DIR, f"{selected_client}_all_designs_temp")
+            try:
+                # Ensure the zip doesn't exist before creating it
+                if os.path.exists(zip_path_base + ".zip"):
+                    os.remove(zip_path_base + ".zip")
 
-                    try:
-                        # Ensure the zip doesn't exist before creating it
-                        if os.path.exists(zip_path_base + ".zip"):
-                             os.remove(zip_path_base + ".zip")
+                # Create the zip archive containing the client's entire output folder
+                # The base_dir is where the archive is created, root_dir is what to zip
+                shutil.make_archive(
+                    base_name=zip_path_base,  # Path and name of the archive to create (without .zip)
+                    format='zip',  # Archive format
+                    root_dir=client_output_base_path  # The directory whose contents will be zipped
+                    # base_dir=None # Not needed if root_dir is set correctly relative to files
+                )
+                zip_path_full = zip_path_base + ".zip"  # Full path to the created zip
 
-                        # Create the zip archive containing the client's entire output folder
-                        # The base_dir is where the archive is created, root_dir is what to zip
-                        shutil.make_archive(
-                            base_name=zip_path_base, # Path and name of the archive to create (without .zip)
-                            format='zip',           # Archive format
-                            root_dir=client_output_base_path # The directory whose contents will be zipped
-                            # base_dir=None # Not needed if root_dir is set correctly relative to files
+                if os.path.exists(zip_path_full):
+                    with open(zip_path_full, "rb") as f:
+                        st.download_button(
+                            label=f"Download All {total_designs_across_products} Designs (incl. all products) as ZIP",
+                            data=f,
+                            file_name=zip_filename,  # The name the user sees when downloading
+                            mime="application/zip",
+                            key="download_zip_all"
                         )
-                        zip_path_full = zip_path_base + ".zip" # Full path to the created zip
+                else:
+                    st.error("Failed to create the ZIP file for download.")
 
-                        if os.path.exists(zip_path_full):
-                             with open(zip_path_full, "rb") as f:
-                                 st.download_button(
-                                    label=f"Download All {total_designs_across_products} Designs (incl. all products) as ZIP",
-                                    data=f,
-                                    file_name=zip_filename, # The name the user sees when downloading
-                                    mime="application/zip",
-                                    key="download_zip_all"
-                                 )
-                             # Clean up the temporary zip file after preparing the button (optional)
-                             # os.remove(zip_path_full)
-                        else:
-                             st.error("Failed to create the ZIP file for download.")
-
-                    except Exception as e:
-                         st.error(f"Could not create ZIP file for download. Error: {e}")
-                         st.exception(e) # Show details for debugging
-
-                else: # Product folders exist, but are empty
-                     st.info("Found generation run folders, but they contain no images.")
-
-            else: # No product directories found inside client output folder
-                st.info("No designs generated yet for this client.")
-        else: # Client output folder itself doesn't exist
-            st.info("No designs generated yet for this client. Use the controls above to create some!")
+            except Exception as e:
+                st.error(f"Could not create ZIP file for download. Error: {e}")
+                st.exception(e)  # Show details for debugging
 
     # Sidebar Footer Info
     st.sidebar.divider()
     st.sidebar.header("How To Use")
     st.sidebar.info("""
     1.  **Create/Select Client** using the sidebar.
-    2.  **Upload Images** for the selected client.
-    3.  **Go to 'Generated Designs' Tab:** Configure method & parameters.
-    4.  **Click 'Generate Designs'.** Wait for processing.
-    5.  **View Results:** Designs appear below, organized by generation run (`product_N`).
-    6.  **Download:** Use the 'Download All' button for a ZIP file.
+    2.  **(NEW) Create/Select Product Folder:** Create product folders to organize designs.
+    3.  **Upload Images** for the selected client.
+    4.  **Go to 'Generated Designs' Tab:** Configure method & parameters.
+    5.  **Click 'Generate Designs'.** Wait for processing.
+    6.  **View Results:** Designs appear below, organized by product folder.
+    7.  **Download:** Use the 'Download All' button for a ZIP file.
     """)
     st.sidebar.divider()
     st.sidebar.caption(f"Using Device: {device.upper()} | Python: {sys.version.split()[0]}")
     st.sidebar.caption(f"Models loaded from: ./models/")
+
 
 # Entry point
 if __name__ == "__main__":
