@@ -164,7 +164,7 @@ def upload_images_to_folder(folder_path):
 
         if saved_count > 0:
             st.success(f"Uploaded {saved_count} images!")
-            st.rerun()
+            # st.rerun()
 
 # generate_designs function to accept client and product folder
 def generate_designs(client_folder, product_folder, generation_method, params):
