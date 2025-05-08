@@ -23,13 +23,20 @@ except RuntimeError as e:
     device = "cpu"
     st.warning("Falling back to CPU mode due to PyTorch initialization error.")
 
-# Import MultiImageStyleTransfer with error handling
+# Import MultiImageStyleTransfer with improved error handling
 try:
+    # Add the current directory to the path to ensure module can be found
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from multiimage_style_transfer import MultiImageStyleTransfer
     model_import_success = True
 except ImportError:
-    st.error("Failed to import MultiImageStyleTransfer. Make sure 'multiimage_style_transfer.py' is in the same folder as app.py.")
-    model_import_success = False
+    try:
+        # Try relative import as fallback
+        from .multiimage_style_transfer import MultiImageStyleTransfer
+        model_import_success = True
+    except ImportError:
+        st.error("Failed to import MultiImageStyleTransfer. Make sure 'multiimage_style_transfer.py' is in the same folder as app.py.")
+        model_import_success = False
 except Exception as e:
     st.error(f"Error occurred importing MultiImageStyleTransfer: {str(e)}")
     model_import_success = False
@@ -82,7 +89,7 @@ def create_product_folder(client_folder, product_name):
     if not safe_product_name:
         st.error("Invalid product name.")
         return False
-
+    
     input_product_path = os.path.join(INPUTS_DIR, client_folder, safe_product_name)
     output_product_path = os.path.join(OUTPUTS_DIR, client_folder, safe_product_name)
     
@@ -166,6 +173,34 @@ def upload_images_to_folder(folder_path):
             st.success(f"Uploaded {saved_count} images!")
             # st.rerun()
 
+# Function to create and download a ZIP file
+def create_and_download_zip(client_output_path, zip_filename):
+    zip_path_base = os.path.join(ROOT_DIR, f"{os.path.basename(client_output_path)}_all_designs_temp")
+    
+    try:
+        if os.path.exists(zip_path_base + ".zip"):
+            os.remove(zip_path_base + ".zip")
+
+        with st.spinner("Creating ZIP file..."):
+            shutil.make_archive(
+                base_name=zip_path_base,
+                format='zip',
+                root_dir=client_output_path
+            )
+            zip_path_full = zip_path_base + ".zip"
+
+            if os.path.exists(zip_path_full):
+                with open(zip_path_full, "rb") as f:
+                    zip_data = f.read()
+                return zip_data
+            else:
+                st.error("Failed to create the ZIP file for download.")
+                return None
+    except Exception as e:
+        st.error(f"Could not create ZIP file for download. Error: {e}")
+        st.exception(e)
+        return None
+
 # generate_designs function to accept client and product folder
 def generate_designs(client_folder, product_folder, generation_method, params):
     if not model_import_success:
@@ -212,30 +247,52 @@ def generate_designs(client_folder, product_folder, generation_method, params):
         with st.spinner(f"Generating designs into '{product_folder}'... This may take several minutes."):
             variations = []
             start_time = time.time()
+            
+            # Create progress bar and status text for all methods
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
             if generation_method == "Standard (Single Base)":
                 st.info(f"Generating {params['num_variations']} variations using '{os.path.basename(input_images_paths[0])}' as base...")
-                variations = model.generate_multi_style_variations(
-                    input_images_paths,
-                    num_variations=params["num_variations"],
-                    strength=params["strength"],
-                    use_rotation=False
-                )
+                status_text.text("Initializing generation process...")
+                
+                # For Standard method, we need to manually track progress
+                for i in range(params["num_variations"]):
+                    status_text.text(f"Generating design {i+1}/{params['num_variations']} using base image...")
+                    # Generate one variation at a time
+                    variation = model.generate_single_variation(
+                        input_images_paths,
+                        strength=params["strength"],
+                        use_rotation=False
+                    )
+                    variations.append(variation)
+                    # Update progress bar
+                    progress_bar.progress((i + 1) / params["num_variations"])
+                
             elif generation_method == "Rotation (Multiple Base)":
                 st.info(f"Generating {params['num_variations']} variations, rotating through base images...")
-                variations = model.generate_multi_style_variations(
-                    input_images_paths,
-                    num_variations=params["num_variations"],
-                    strength=params["strength"],
-                    use_rotation=True
-                )
+                status_text.text("Initializing rotation-based generation...")
+                
+                # For Rotation method, we need to manually track progress
+                for i in range(params["num_variations"]):
+                    base_idx = i % len(input_images_paths)
+                    status_text.text(f"Generating design {i+1}/{params['num_variations']} using base image {base_idx+1}...")
+                    # Generate one variation at a time with rotation
+                    variation = model.generate_single_variation(
+                        input_images_paths,
+                        strength=params["strength"],
+                        use_rotation=True,
+                        rotation_index=base_idx
+                    )
+                    variations.append(variation)
+                    # Update progress bar
+                    progress_bar.progress((i + 1) / params["num_variations"])
+                
             elif generation_method == "Batch Process (All Bases)":
                 st.info(f"Generating {params['variations_per_base']} variations for each of the {len(input_images_paths)} base images...")
                 all_variations = []
                 num_bases = len(input_images_paths)
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-
+                
                 for i in range(num_bases):
                     current_base_path = input_images_paths[i]
                     status_text.text(f"Processing base image {i+1}/{num_bases}: {os.path.basename(current_base_path)}")
@@ -252,7 +309,11 @@ def generate_designs(client_folder, product_folder, generation_method, params):
                 variations = all_variations
                 status_text.text("Batch processing complete.")
 
+            # Add progress tracking for saving images
+            status_text.text("Saving generated designs...")
+            save_progress = st.progress(0)
             saved_count = 0
+            
             for i, variation in enumerate(variations):
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 output_filename = f"design_{timestamp}_{i + 1}.png"
@@ -260,11 +321,13 @@ def generate_designs(client_folder, product_folder, generation_method, params):
                 try:
                     variation.save(output_path)
                     saved_count += 1
+                    save_progress.progress((i + 1) / len(variations))
                 except Exception as e:
                     st.error(f"Failed to save generated image {output_filename}. Error: {e}")
 
             end_time = time.time()
             duration = end_time - start_time
+            status_text.text(f"Generation complete! Saved {saved_count} designs in {duration:.2f} seconds.")
 
         if saved_count > 0:
             st.success(f"Successfully generated and saved {saved_count} designs into '{product_folder}' in {duration:.2f} seconds!")
@@ -432,46 +495,28 @@ def main():
                         st.markdown(f"#### Product: {product_dir_name} ({num_images_in_product} images)")
                         display_folder_images(product_dir_path, columns=4)
                         st.divider()
-
                 if total_designs_across_products > 0:
                     st.write(f"Total number of generated designs across all products: {total_designs_across_products}")
+                    
+                    # Only show the download button, don't create the ZIP automatically
+                    if st.button("Prepare ZIP file for download", key="prepare_zip"):
+                        zip_filename = f"{selected_client}_all_designs.zip"
+                        zip_data = create_and_download_zip(client_output_base_path, zip_filename)
+                        
+                        if zip_data:
+                            st.download_button(
+                                label=f"Download All {total_designs_across_products} Designs (incl. all products) as ZIP",
+                                data=zip_data,
+                                file_name=zip_filename,
+                                mime="application/zip",
+                                key="download_zip_all"
+                            )
                 else:
                     st.info("No designs generated for this client yet.")
             else:
                 st.info("No designs generated for this client yet.")
         else:
             st.info("No designs generated for this client yet.")
-
-        if os.path.exists(client_output_base_path):
-            zip_filename = f"{selected_client}_all_designs.zip"
-            zip_path_base = os.path.join(ROOT_DIR, f"{selected_client}_all_designs_temp")
-
-            try:
-                if os.path.exists(zip_path_base + ".zip"):
-                    os.remove(zip_path_base + ".zip")
-
-                shutil.make_archive(
-                    base_name=zip_path_base,
-                    format='zip',
-                    root_dir=client_output_base_path
-                )
-                zip_path_full = zip_path_base + ".zip"
-
-                if os.path.exists(zip_path_full):
-                    with open(zip_path_full, "rb") as f:
-                        st.download_button(
-                            label=f"Download All {total_designs_across_products} Designs (incl. all products) as ZIP",
-                            data=f,
-                            file_name=zip_filename,
-                            mime="application/zip",
-                            key="download_zip_all"
-                        )
-                else:
-                    st.error("Failed to create the ZIP file for download.")
-
-            except Exception as e:
-                st.error(f"Could not create ZIP file for download. Error: {e}")
-                st.exception(e)
 
     st.sidebar.divider()
     st.sidebar.header("How To Use")
