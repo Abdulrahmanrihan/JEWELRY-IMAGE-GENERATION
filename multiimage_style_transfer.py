@@ -1,4 +1,3 @@
-# --- Start of multiimage_style_transfer.py ---
 import os
 import random
 import torch
@@ -13,7 +12,6 @@ from transformers import CLIPProcessor, CLIPModel
 from glob import glob
 
 class MultiImageStyleTransfer:
-    # *** MODIFICATION START ***
     def __init__(self, model_dir):
         """
         Initialize multi-image style transfer pipeline using local models.
@@ -24,7 +22,7 @@ class MultiImageStyleTransfer:
         """
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
-
+        
         clip_model_path = os.path.join(model_dir, "clip-vit-base-patch32")
         sd_model_path = os.path.join(model_dir, "stable-diffusion-2-1")
 
@@ -40,7 +38,7 @@ class MultiImageStyleTransfer:
         # Add use_fast=True to address the warning
         self.clip_processor = CLIPProcessor.from_pretrained(clip_model_path, use_fast=False)
         print("CLIP model loaded.")
-
+        
         print(f"Loading Stable Diffusion model from: {sd_model_path}")
         # Determine torch dtype based on device
         torch_dtype = torch.float16 if self.device.type == 'cuda' else torch.float32
@@ -59,9 +57,6 @@ class MultiImageStyleTransfer:
         #        print("Enabled xformers memory efficient attention.")
         #    except ImportError:
         #        print("xformers not installed. Memory efficient attention not enabled.")
-
-    # *** MODIFICATION END ***
-
 
     def extract_image_features(self, images):
         """
@@ -115,7 +110,6 @@ class MultiImageStyleTransfer:
 
         return F.normalize(aggregated_features, p=2, dim=-1)
 
-
     # This simple prompt generation might be less effective than desired.
     # Consider replacing with a fixed, good prompt for jewelry or enhancing this.
     def generate_enhanced_style_prompt(self, image_features, num_input_images):
@@ -151,7 +145,6 @@ class MultiImageStyleTransfer:
         # print(f"Generated Prompt: {full_prompt}") # For debugging
         return full_prompt
 
-
     def preprocess_images(self, image_paths, target_size=(768, 768)):
         """
         Load, resize, and pad images.
@@ -185,6 +178,69 @@ class MultiImageStyleTransfer:
 
         return preprocessed_images
 
+    def generate_single_variation(self, input_images_paths, strength=0.7, use_rotation=False, rotation_index=0, guidance_scale=7.5, num_inference_steps=30):
+        """
+        Generate a single variation with optional rotation
+
+        Args:
+            input_images_paths (List[str]): Paths to input images.
+            strength (float): Image-to-image strength (0-1).
+            use_rotation (bool): If True, use the image at rotation_index as base.
+            rotation_index (int): Index of the image to use as base if use_rotation is True.
+            guidance_scale (float): Controls how much the prompt guides generation.
+            num_inference_steps (int): Number of denoising steps.
+
+        Returns:
+            PIL.Image: Generated variation
+        """
+        # Preprocess input images
+        input_images = self.preprocess_images(input_images_paths)
+        
+        if not input_images:
+            print("Error: No valid input images could be preprocessed.")
+            return None
+            
+        # Extract features from all images
+        image_features = self.extract_image_features(input_images)
+        
+        # Generate prompt
+        prompt = self.generate_enhanced_style_prompt(image_features, len(input_images))
+        negative_prompt = "low quality, blurry, distorted, deformed, unrealistic, amateurish, text, signature, watermark, multiple pieces, collage"
+        
+        # Random seed for variation
+        seed = random.randint(1, 1000000)
+        generator = torch.Generator(device=self.device).manual_seed(seed)
+        
+        # Select the base image
+        if use_rotation and len(input_images) > 1:
+            # Use the specified image as base
+            base_image_index = rotation_index % len(input_images)
+            base_image = input_images[base_image_index]
+        else:
+            # Use the first image as base
+            base_image = input_images[0]
+            
+        try:
+            # Ensure base_image is a PIL Image
+            if not isinstance(base_image, Image.Image):
+                raise TypeError("Base image must be a PIL Image.")
+                
+            # Generate the variation
+            variation = self.pipe(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                image=base_image,
+                strength=strength,
+                guidance_scale=guidance_scale,
+                generator=generator,
+                num_inference_steps=num_inference_steps
+            ).images[0]
+            
+            return variation
+            
+        except Exception as e:
+            print(f"Error during single variation generation: {e}")
+            return None
 
     def generate_multi_style_variations(
         self,
@@ -247,7 +303,6 @@ class MultiImageStyleTransfer:
             # adaptive_strength = min(strength * (1 + 0.02 * num_base_images), 0.95)
             adaptive_strength = strength # Using fixed strength might be more predictable
 
-
             # Generate variation using the pipeline
             try:
                  # Ensure base_image is a PIL Image
@@ -276,7 +331,6 @@ class MultiImageStyleTransfer:
 
         return generated_variations
 
-
     # The composite base image function might not be needed if using rotation or single base logic,
     # but keeping it here for potential future use.
     def create_composite_base_image(self, input_images):
@@ -304,5 +358,3 @@ class MultiImageStyleTransfer:
         # Convert back to PIL Image
         composite_image = Image.fromarray(result_array.astype(np.uint8))
         return composite_image
-
-# --- End of multiimage_style_transfer.py ---
